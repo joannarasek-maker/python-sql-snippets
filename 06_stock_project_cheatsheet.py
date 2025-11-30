@@ -3,15 +3,15 @@
 #  Extracting and visualizing stock data (Tesla & GameStop)
 # ============================================================
 
-# --- (opcjonalnie – tylko przy pracy lokalnej) ------------
-# Uruchom raz, jeśli brakuje bibliotek:
+# --- (optional – only when running locally) -----------------
+# Run once if the libraries are missing:
 # !pip install yfinance
 # !pip install pandas
 # !pip install requests
 # !pip install bs4
 # !pip install plotly
 
-# --- Importy -----------------------------------------------
+# --- Imports ------------------------------------------------
 import yfinance as yf
 import pandas as pd
 import requests
@@ -20,17 +20,23 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # ============================================================
-# 1. Funkcja rysująca wykres ceny akcji i przychodu
-#    (górny panel: kurs akcji, dolny panel: revenue)
+# 1. Helper function – price & revenue chart
+#    (top panel: stock price, bottom panel: revenue)
 # ============================================================
 
-def plot_price_and_revenue(stock_df, revenue_df, title):
+def plot_price_and_revenue(stock_df, revenue_df, title: str) -> None:
     """
-    stock_df   – DataFrame z kolumnami: Date, Close
-    revenue_df – DataFrame z kolumnami: Date, Revenue
-    title      – tytuł wykresu (np. 'Tesla (TSLA)')
-    """
+    Plot share price and quarterly revenue on two stacked subplots.
 
+    Parameters
+    ----------
+    stock_df : pd.DataFrame
+        DataFrame with at least columns: 'Date', 'Close'.
+    revenue_df : pd.DataFrame
+        DataFrame with at least columns: 'Date', 'Revenue'.
+    title : str
+        Plot title, e.g. 'Tesla (TSLA)'.
+    """
     fig = make_subplots(
         rows=2,
         cols=1,
@@ -39,7 +45,7 @@ def plot_price_and_revenue(stock_df, revenue_df, title):
         subplot_titles=("Share Price", "Quarterly Revenue")
     )
 
-    # Kurs akcji
+    # Share price
     fig.add_trace(
         go.Scatter(
             x=pd.to_datetime(stock_df["Date"]),
@@ -50,7 +56,7 @@ def plot_price_and_revenue(stock_df, revenue_df, title):
         col=1
     )
 
-    # Przychód
+    # Revenue
     fig.add_trace(
         go.Scatter(
             x=pd.to_datetime(revenue_df["Date"]),
@@ -75,33 +81,54 @@ def plot_price_and_revenue(stock_df, revenue_df, title):
 
 
 # ============================================================
-# 2. Funkcja pomocnicza – pobieranie danych z yfinance
+# 2. Helper function – download price history from yfinance
 # ============================================================
 
-def get_stock_history(ticker_symbol, period="max"):
+def get_stock_history(ticker_symbol: str, period: str = "max") -> pd.DataFrame:
     """
-    Pobiera dane historyczne dla wybranego tickera z yfinance.
-    Zwraca DataFrame z kolumnami: Date, Open, High, Low, Close, Volume, ...
+    Download historical stock data from yfinance.
+
+    Parameters
+    ----------
+    ticker_symbol : str
+        Ticker symbol, e.g. 'TSLA', 'GME'.
+    period : str, default 'max'
+        Period passed to yfinance.Ticker.history (e.g. '1y', '5y', 'max').
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with columns such as: Date, Open, High, Low, Close, Volume.
     """
     ticker = yf.Ticker(ticker_symbol)
     hist = ticker.history(period=period)
-    hist.reset_index(inplace=True)   # przeniesienie daty do zwykłej kolumny
+    hist.reset_index(inplace=True)  # move DatetimeIndex into a regular 'Date' column
     return hist
 
 
 # ============================================================
-# 3. Funkcja pomocnicza – web-scraping tabeli przychodów
-#    z serwisu Macrotrends (lub podobnej strony)
+# 3. Helper function – scrape quarterly revenue table
+#    from Macrotrends (or a similar site)
 # ============================================================
 
-def get_revenue_from_macrotrends(url, table_label):
+def get_revenue_from_macrotrends(url: str, table_label: str) -> pd.DataFrame:
     """
-    Pobiera tabelę 'Quarterly Revenue' ze strony Macrotrends.
+    Scrape a 'Quarterly Revenue' table from the Macrotrends page.
 
-    url         – adres strony (np. Tesla revenue page)
-    table_label – fragment tekstu rozpoznający właściwą tabelę,
-                  np. 'Tesla Quarterly Revenue', 'GameStop Quarterly Revenue'
-    Zwraca DataFrame z kolumnami: Date, Revenue (float, w mln USD).
+    Parameters
+    ----------
+    url : str
+        Page URL, e.g. Tesla revenue page on Macrotrends.
+    table_label : str
+        Text snippet used to identify the correct table,
+        e.g. 'Tesla Quarterly Revenue', 'GameStop Quarterly Revenue'.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with columns:
+        - 'Date' (string in 'YYYY-MM-DD' format as on the page)
+        - 'Revenue' (float, in USD, cleaned from '$' and commas)
     """
     html = requests.get(url).text
     soup = BeautifulSoup(html, "html.parser")
@@ -115,7 +142,7 @@ def get_revenue_from_macrotrends(url, table_label):
             break
 
     if target_table is None:
-        raise ValueError("Nie znaleziono tabeli z przychodami.")
+        raise ValueError("Could not find revenue table on the page.")
 
     dates = []
     revenues = []
@@ -124,6 +151,7 @@ def get_revenue_from_macrotrends(url, table_label):
         cols = row.find_all("td")
         if len(cols) < 2:
             continue
+
         date = cols[0].get_text(strip=True)
         revenue = cols[1].get_text(strip=True)
 
@@ -135,14 +163,14 @@ def get_revenue_from_macrotrends(url, table_label):
 
     revenue_df = pd.DataFrame({"Date": dates, "Revenue": revenues})
 
-    # Czyszczenie formatu przychodów: usuwamy $ i przecinki
+    # Clean revenue format: remove '$' and commas, convert to float
     revenue_df["Revenue"] = (
         revenue_df["Revenue"]
         .str.replace(r"[$,]", "", regex=True)
         .astype(float)
     )
 
-    # Porządkujemy rosnąco po dacie
+    # Sort ascending by date and reset index
     revenue_df = revenue_df.sort_values("Date")
     revenue_df.reset_index(drop=True, inplace=True)
 
@@ -150,61 +178,59 @@ def get_revenue_from_macrotrends(url, table_label):
 
 
 # ============================================================
-# 4. TESLA (TSLA) – dane z yfinance + revenue z Macrotrends
+# 4. TESLA (TSLA) – yfinance price data + Macrotrends revenue
 # ============================================================
 
-# 4.1. Kurs akcji Tesli z yfinance
+# 4.1. Tesla share price from yfinance
 tesla_stock = get_stock_history("TSLA", period="max")
 
-# 4.2. Web-scraping tabeli z przychodami Tesli
+# 4.2. Tesla quarterly revenue scraped from Macrotrends
 tesla_revenue_url = "https://www.macrotrends.net/stocks/charts/TSLA/tesla/revenue"
 tesla_revenue = get_revenue_from_macrotrends(
     tesla_revenue_url,
     "Tesla Quarterly Revenue"
 )
 
-# (opcjonalnie można przyciąć zakres dat, np. po 2015 roku)
+# (optional) restrict date range, e.g. from 2015 onwards:
 # tesla_stock = tesla_stock[tesla_stock["Date"] >= "2015-01-01"]
 # tesla_revenue = tesla_revenue[tesla_revenue["Date"] >= "2015-01-01"]
 
-# 4.3. Wykres Tesli
+# 4.3. Plot Tesla
 plot_price_and_revenue(tesla_stock, tesla_revenue, "Tesla (TSLA)")
 
 
 # ============================================================
-# 5. GAMESTOP (GME) – dane z yfinance + revenue z Macrotrends
+# 5. GAMESTOP (GME) – yfinance price data + Macrotrends revenue
 # ============================================================
 
-# 5.1. Kurs akcji GameStop z yfinance
+# 5.1. GameStop share price from yfinance
 gme_stock = get_stock_history("GME", period="max")
 
-# 5.2. Web-scraping tabeli z przychodami GameStop
+# 5.2. GameStop quarterly revenue scraped from Macrotrends
 gme_revenue_url = "https://www.macrotrends.net/stocks/charts/GME/gamestop/revenue"
 gme_revenue = get_revenue_from_macrotrends(
     gme_revenue_url,
     "GameStop Quarterly Revenue"
 )
 
-# (opcjonalne przycięcie dat)
+# (optional) restrict date range:
 # gme_stock = gme_stock[gme_stock["Date"] >= "2015-01-01"]
 # gme_revenue = gme_revenue[gme_revenue["Date"] >= "2015-01-01"]
 
-# 5.3. Wykres GameStop
+# 5.3. Plot GameStop
 plot_price_and_revenue(gme_stock, gme_revenue, "GameStop (GME)")
 
 
 # ============================================================
-# 6. Szybkie podsumowanie danych (przykładowe komendy EDA)
+# 6. Quick data checks (example EDA commands)
 # ============================================================
 
-# Podgląd danych Tesli
 print("TESLA STOCK DATA:")
 print(tesla_stock.head(), "\n")
 
 print("TESLA REVENUE DATA:")
 print(tesla_revenue.head(), "\n")
 
-# Podgląd danych GameStop
 print("GME STOCK DATA:")
 print(gme_stock.head(), "\n")
 
